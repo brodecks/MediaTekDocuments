@@ -6,7 +6,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using Newtonsoft.Json.Linq;
 using System.Configuration;
-using System.Linq;
+using Serilog;
 
 namespace MediaTekDocuments.dal
 {
@@ -18,7 +18,8 @@ namespace MediaTekDocuments.dal
         /// <summary>
         /// adresse de l'API
         /// </summary>
-        private static readonly string uriApi = "http://localhost/rest_mediatekdocuments/";
+        private static readonly string uriApi = "http://rest_mediatekdocuments/";
+        private static readonly string authenticationName = "MediaTekDocuments.Properties.Settings.mediatekAuthenticationString";
         /// <summary>
         /// instance unique de la classe
         /// </summary>
@@ -37,6 +38,12 @@ namespace MediaTekDocuments.dal
         private const string POST = "POST";
         /// <summary>
         /// méthode HTTP pour update
+        /// <summary>
+        private const string PUT = "PUT";
+        /// <summary>
+        /// méthode HTTP pour delete
+        /// </summary>
+        private const string DELETE = "DELETE";
 
         /// <summary>
         /// Méthode privée pour créer un singleton
@@ -44,14 +51,15 @@ namespace MediaTekDocuments.dal
         /// </summary>
         private Access()
         {
-            String authenticationString;
+            String authenticationString = null;
             try
             {
-                authenticationString = "admin:adminpwd";
+                authenticationString = GetAuthenticationStringByName(authenticationName);
                 api = ApiRest.GetInstance(uriApi, authenticationString);
             }
             catch (Exception e)
             {
+                Log.Fatal("Access.Access catch authenticationString={0} erreur={1}", authenticationString, e.Message);
                 Console.WriteLine(e.Message);
                 Environment.Exit(0);
             }
@@ -63,11 +71,25 @@ namespace MediaTekDocuments.dal
         /// <returns>instance unique de la classe</returns>
         public static Access GetInstance()
         {
-            if(instance == null)
+            if (instance == null)
             {
                 instance = new Access();
             }
             return instance;
+        }
+
+        /// <summary>
+        /// Récupération de la chaîne de connexion
+        /// </summary>
+        /// <param name="name">chaîne de connexion dans App.config</param>
+        /// <returns>chaîne de connexion</returns>
+        static string GetAuthenticationStringByName(string name)
+        {
+            string returnValue = null;
+            ConnectionStringSettings settings = ConfigurationManager.ConnectionStrings[name];
+            if (settings != null)
+                returnValue = settings.ConnectionString;
+            return returnValue;
         }
 
         /// <summary>
@@ -130,13 +152,12 @@ namespace MediaTekDocuments.dal
             return lesRevues;
         }
 
-
         /// <summary>
-        /// Retourne les exemplaires d'une revue
+        /// Retourne les exemplaires d'un document
         /// </summary>
-        /// <param name="idDocument">id de la revue concernée</param>
+        /// <param name="idDocument">id du document concerné</param>
         /// <returns>Liste d'objets Exemplaire</returns>
-        public List<Exemplaire> GetExemplairesRevue(string idDocument)
+        public List<Exemplaire> GetExemplaires(string idDocument)
         {
             String jsonIdDocument = convertToJson("id", idDocument);
             List<Exemplaire> lesExemplaires = TraitementRecup<Exemplaire>(GET, "exemplaire/" + jsonIdDocument, null);
@@ -144,7 +165,61 @@ namespace MediaTekDocuments.dal
         }
 
         /// <summary>
-        /// ecriture d'un exemplaire en base de données
+        /// Retourne tous les suivis à partir de la BDD
+        /// </summary>
+        /// <returns>Liste d'objets Suivi</returns>
+        public List<Suivi> GetAllSuivis()
+        {
+            IEnumerable<Suivi> lesSuivis = TraitementRecup<Suivi>(GET, "suivi", null);
+            return new List<Suivi>(lesSuivis);
+        }
+
+        /// <summary>
+        /// Retourne tous les états à partir de la BDD
+        /// </summary>
+        /// <returns>Liste d'objets Etat</returns>
+        public List<Etat> GetAllEtats()
+        {
+            IEnumerable<Etat> lesEtats = TraitementRecup<Etat>(GET, "etat", null);
+            return new List<Etat>(lesEtats);
+        }
+
+        /// <summary>
+        /// Retourne les commandes d'un livre ou dvd
+        /// </summary>
+        /// <param name="idDocument">id du document concerné</param>
+        /// <returns>Liste d'objets CommandeDocument</returns>
+        public List<CommandeDocument> GetCommandeDocuments(string idDocument)
+        {
+            String jsonIdDocument = convertToJson("id", idDocument);
+            List<CommandeDocument> lesCommandesDocument = TraitementRecup<CommandeDocument>(GET, "commandedocument/" + jsonIdDocument, null);
+            return lesCommandesDocument;
+        }
+
+        /// <summary>
+        /// Retourne les abonnements d'une revue
+        /// </summary>
+        /// <param name="idDocument">id du document concerné</param>
+        /// <returns>Liste d'objets Abonnement</returns>
+        public List<Abonnement> GetAbonnements(string idDocument)
+        {
+            String jsonIdDocument = convertToJson("id", idDocument);
+            List<Abonnement> lesAbonnements = TraitementRecup<Abonnement>(GET, "abonnement/" + jsonIdDocument, null);
+            return lesAbonnements;
+        }
+
+        /// <summary>
+        /// Retourne tous les abonnements se finissant dans moins de 30 jours à partir de la BDD
+        /// </summary>
+        /// <returns>Liste d'objets AbonnementFinissant</returns>
+        public List<AbonnementFinissant> GetAbonnementsFinissant()
+        {
+            List<AbonnementFinissant> lesAbonnementsFinissant = TraitementRecup<AbonnementFinissant>(GET, "abonnementfinissant", null);
+            return lesAbonnementsFinissant;
+        }
+
+        /// <summary>
+        /// écriture d'un exemplaire en base de données
         /// </summary>
         /// <param name="exemplaire">exemplaire à insérer</param>
         /// <returns>true si l'insertion a pu se faire (retour != null)</returns>
@@ -158,9 +233,235 @@ namespace MediaTekDocuments.dal
             }
             catch (Exception ex)
             {
+                Log.Error(ex, "Access.CreerExemplaire catch type erreur={0} champs={1}", ex, jsonExemplaire);
                 Console.WriteLine(ex.Message);
             }
             return false;
+        }
+
+        /// <summary>
+        /// modification de l'état d'un exemplaire en base de données
+        /// </summary>
+        /// <param name="idExemplaire">id de l'exemplaire à modifier</param>
+        /// <param name="exemplaire">exemplaire à modifier</param>
+        /// <returns>true si la modification a pu se faire (retour != null)</returns>
+        public bool ModifierExemplaire(string idExemplaire, Exemplaire exemplaire)
+        {
+            String jsonExemplaire = JsonConvert.SerializeObject(exemplaire, new CustomDateTimeConverter());
+            try
+            {
+                List<Exemplaire> liste = TraitementRecup<Exemplaire>(PUT, "exemplaire/" + idExemplaire, "champs=" + jsonExemplaire);
+                return (liste != null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Access.ModifierExemplaire catch type erreur={0} id={1} champs={2}", ex, idExemplaire, jsonExemplaire);
+                Console.WriteLine(ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// suppression d'un exemplaire en base de données
+        /// </summary>
+        /// <param name="idExemplaire">id de l'exemplaire à supprimer</param>
+        /// <param name="numeroExemplaire">numero de l'exemplaire à supprimer</param>
+        /// <returns>true si la suppression a pu se faire (retour != null)</returns>
+        public bool SupprimerExemplaire(string idExemplaire, int numeroExemplaire)
+        {
+            string jsonExemplaire = "{\"Id\":\"" + idExemplaire + "\",\"Numero\":\"" + numeroExemplaire + "\"}";
+            try
+            {
+                List<Exemplaire> liste = TraitementRecup<Exemplaire>(DELETE, "exemplaire/" + jsonExemplaire, null);
+                return (liste != null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Access.SupprimerExemplaire catch type erreur={0} champs={1}", ex, jsonExemplaire);
+                Console.WriteLine(ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// écriture d'une commande de livre ou dvd en base de données
+        /// </summary>
+        /// <param name="commandeDocument">commande à insérer</param>
+        /// <returns>true si l'insertion a pu se faire (retour != null)</returns>
+        public bool CreerCommandeDocument(CommandeDocument commandeDocument)
+        {
+            String jsonCommandeDocument = JsonConvert.SerializeObject(commandeDocument, new CustomDateTimeConverter());
+            try
+            {
+                List<CommandeDocument> liste = TraitementRecup<CommandeDocument>(POST, "commandedocument", "champs=" + jsonCommandeDocument);
+                return (liste != null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Access.CreerCommandeDocument catch type erreur={0} champs={1}", ex, jsonCommandeDocument);
+                Console.WriteLine(ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// modification de l'étape de suivi d'une commande de livre ou dvd en base de données
+        /// </summary>
+        /// <param name="idCommande">id de la commande à modifier</param>
+        /// <param name="commandeDocument">commande à modifier</param>
+        /// <returns>true si la modification a pu se faire (retour != null)</returns>
+        public bool ModifierCommandeDocument(string idCommande, CommandeDocument commandeDocument)
+        {
+            String jsonCommandeDocument = JsonConvert.SerializeObject(commandeDocument, new CustomDateTimeConverter());
+            try
+            {
+                List<CommandeDocument> liste = TraitementRecup<CommandeDocument>(PUT, "commandedocument/" + idCommande, "champs=" + jsonCommandeDocument);
+                return (liste != null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Access.ModifierCommandeDocument catch type erreur={0} id={1} champs={2}", ex, idCommande, jsonCommandeDocument);
+                Console.WriteLine(ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// suppression d'une commande (abonnement compris) en base de données
+        /// </summary>
+        /// <param name="idCommande">commande à supprimer</param>
+        /// <returns>true si la suppression a pu se faire (retour != null)</returns>
+        public bool SupprimerCommande(string idCommande)
+        {
+            String jsonIdCommande = convertToJson("Id", idCommande);
+            try
+            {
+                List<CommandeDocument> liste = TraitementRecup<CommandeDocument>(DELETE, "commande/" + jsonIdCommande, null);
+                return (liste != null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Access.SupprimerCommande catch type erreur={0} id={1}", ex, jsonIdCommande);
+                Console.WriteLine(ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// écriture d'un abonnement de revue en base de données
+        /// </summary>
+        /// <param name="abonnement">abonnement à insérer</param>
+        /// <returns>true si l'insertion a pu se faire (retour != null)</returns>
+        public bool CreerAbonnement(Abonnement abonnement)
+        {
+            String jsonAbonnement = JsonConvert.SerializeObject(abonnement, new CustomDateTimeConverter());
+            try
+            {
+                List<Abonnement> liste = TraitementRecup<Abonnement>(POST, "abonnement", "champs=" + jsonAbonnement);
+                return (liste != null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Access.CreerAbonnement catch type erreur={0} champs={1}", ex, jsonAbonnement);
+                Console.WriteLine(ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// écriture d'un element en base de données
+        /// </summary>
+        /// <param name="typeElement">type de l'élément à ajouter</param>
+        /// <param name="element">élement à ajouter</param>
+        /// <returns>true si l'ajout a pu se faire (retour != null)</returns>
+        public bool AjouterElement(string typeElement, Object element)
+        {
+            String jsonElement = JsonConvert.SerializeObject(element);
+            try
+            {
+                List<Object> liste = TraitementRecup<Object>(POST, typeElement, "champs=" + jsonElement);
+                return (liste != null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Access.AjouterElement catch type erreur={0} type document={1} champs={2}", ex, typeElement, jsonElement);
+                Console.WriteLine(ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// modification d'un element en base de données
+        /// </summary>
+        /// <param name="typeElement">type de l'élément à modifier</param>
+        /// <param name="idElement">id de l'élément à modifier</param>
+        /// <param name="element">élément à modifier</param>
+        /// <returns>true si la modification a pu se faire (retour != null)</returns>
+        public bool ModifierElement(string typeElement, string idElement, Object element)
+        {
+            String jsonElement = JsonConvert.SerializeObject(element);
+            try
+            {
+                List<Object> liste = TraitementRecup<Object>(PUT, typeElement + "/" + idElement, "champs=" + jsonElement);
+                return (liste != null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Access.ModifierElement catch type erreur={0} type document={1} id={2} champs={3}", ex, typeElement, idElement, jsonElement);
+                Console.WriteLine(ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// suppression d'un element en base de données
+        /// </summary>
+        /// <param name="typeElement">type de l'élément à supprimer</param>
+        /// <param name="idElement">id de l'élément à supprimer</param>
+        /// <returns>true si la suppression a pu se faire (retour != null)</returns>
+        public bool SupprimerElement(string typeElement, string idElement)
+        {
+            String jsonIdElement = convertToJson("Id", idElement);
+            try
+            {
+                List<Object> liste = TraitementRecup<Object>(DELETE, typeElement + "/" + jsonIdElement, null);
+                return (liste != null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Access.SupprimerElement catch type erreur={0} type document={1} id={2}", ex, typeElement, jsonIdElement);
+                Console.WriteLine(ex.Message);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Vérifie l'authentification et récupère les informations d'un utilisateur dans la base de données si ses informations sont correctes
+        /// </summary>
+        /// <param name="login">login de l'utilisateur essayant de se connecter</param>
+        /// <param name="password">mot de passe de l'utilisateur essayant de se connecter</param>
+        /// <returns>Objet Utilisateur si les informations sont correctes, null si les informations sont incorrectes</returns>
+        public Utilisateur ControleAuthentification(string login, string password)
+        {
+            String jsonLogin = convertToJson("login", login);
+            List<Utilisateur> utilisateur = TraitementRecup<Utilisateur>(GET, "utilisateur/" + jsonLogin, null);
+            if (utilisateur != null && utilisateur.Count > 0)
+            {
+                Utilisateur utilisateurVerifie = utilisateur[0];
+                string utilisateurPassword = utilisateurVerifie.Password;
+                if (utilisateurPassword.Equals(password))
+                {
+                    return utilisateurVerifie;
+                }
+                else
+                {
+                    return null;
+                }
+            }
+            else
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -171,7 +472,7 @@ namespace MediaTekDocuments.dal
         /// <param name="message">information envoyée dans l'url</param>
         /// <param name="parametres">paramètres à envoyer dans le body, au format "chp1=val1&chp2=val2&..."</param>
         /// <returns>liste d'objets récupérés (ou liste vide)</returns>
-        private List<T> TraitementRecup<T> (String methode, String message, String parametres)
+        private List<T> TraitementRecup<T>(String methode, String message, String parametres)
         {
             // trans
             List<T> liste = new List<T>();
@@ -193,10 +494,13 @@ namespace MediaTekDocuments.dal
                 else
                 {
                     Console.WriteLine("code erreur = " + code + " message = " + (String)retour["message"]);
+                    Log.Error("Access.TraitementRecup code erreur={Message}", code, (String)retour["message"]);
                 }
-            }catch(Exception e)
+            }
+            catch (Exception e)
             {
-                Console.WriteLine("Erreur lors de l'accès à l'API : "+e.Message);
+                Console.WriteLine("Erreur lors de l'accès à l'API : " + e.Message);
+                Log.Fatal("Access.TraitementRecup Erreur lors de l'accès à l'API : {Message}", e.Message);
                 Environment.Exit(0);
             }
             return liste;
