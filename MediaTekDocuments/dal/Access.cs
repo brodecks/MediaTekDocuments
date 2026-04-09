@@ -18,7 +18,7 @@ namespace MediaTekDocuments.dal
         /// <summary>
         /// adresse de l'API
         /// </summary>
-        private static readonly string uriApi = "http://rest_mediatekdocuments/";
+        private static readonly string uriApi = "http://localhost/rest_mediatekdocuments/";
         private static readonly string authenticationName = "MediaTekDocuments.Properties.Settings.mediatekAuthenticationString";
         /// <summary>
         /// instance unique de la classe
@@ -500,8 +500,14 @@ namespace MediaTekDocuments.dal
             catch (Exception e)
             {
                 Console.WriteLine("Erreur lors de l'accès à l'API : " + e.Message);
+                if (e.InnerException != null)
+                {
+                    Console.WriteLine("LA VRAIE ERREUR EST : " + e.InnerException.Message);
+                    Log.Fatal("Vraie erreur API : {Message}", e.InnerException.Message);
+                }
+
                 Log.Fatal("Access.TraitementRecup Erreur lors de l'accès à l'API : {Message}", e.Message);
-                Environment.Exit(0);
+                //Environment.Exit(0);
             }
             return liste;
         }
